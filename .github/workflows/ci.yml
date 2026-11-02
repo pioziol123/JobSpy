@@ -26,6 +26,7 @@ jobs:
       - run: python -m build --wheel
       - run: "python -m pip install --only-binary :all: dist/*.whl"
       - run: cd /tmp && python -c "from jobspy import scrape_jobs"
+      - run: python -m unittest discover -s tests -v
       - run: cd /tmp && jobspy --help && python -m jobspy --version
       - run: python -m build --wheel mcp
       - run: "python -m pip install --only-binary :all: dist/*.whl mcp/dist/*.whl"
@@ -42,8 +43,8 @@ jobs:
           python-version: "3.14"
       - run: pipx install poetry==2.5.1
       - run: poetry sync --no-root --all-extras
-      - run: poetry run ruff check jobspy
-      - run: poetry run ruff format --diff jobspy
+      - run: poetry run ruff check jobspy tests
+      - run: poetry run ruff format --diff jobspy tests
       - if: failure()
         run: echo "::error::This PR doesn't match the project's ruff lint and format rules. Run 'pip install --group dev', then 'ruff format jobspy' and 'ruff check --fix jobspy'. Fix anything ruff still reports, then push."
       - run: poetry run mypy

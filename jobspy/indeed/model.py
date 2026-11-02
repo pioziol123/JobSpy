@@ -88,7 +88,8 @@ class Job(BaseModel):
 
 
 class Result(BaseModel):
-    job: dict[str, object] | None
+    # Validate each job separately so one malformed item doesn't discard a page.
+    job: object = None
 
 
 class JobSearch(BaseModel):

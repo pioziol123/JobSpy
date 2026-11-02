@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -138,12 +139,16 @@ class CompensationInterval(Enum):
 
 annual_factor = {"hourly": 2080, "daily": 260, "weekly": 52, "monthly": 12, "yearly": 1}
 
+SalaryOrigin = Literal["employer", "portal_estimate", "unknown"]
+
 
 class Compensation(BaseModel):
     interval: CompensationInterval | None = None
     min_amount: float | None = None
     max_amount: float | None = None
     currency: str | None = None
+    salary_origin: SalaryOrigin = "unknown"
+    salary_evidence: dict[str, object] | None = None
 
 
 class DescriptionFormat(Enum):
@@ -165,6 +170,8 @@ class JobPost(BaseModel):
     date_posted: date | None = None
     job_type: list[JobType] | None = None
     salary_source: str | None = None
+    salary_origin: SalaryOrigin = "unknown"
+    salary_evidence: dict[str, object] | None = None
     interval: CompensationInterval | None = None
     min_amount: float | None = None
     max_amount: float | None = None
@@ -205,7 +212,7 @@ class JobPost(BaseModel):
             return value
 
         row = {name: text(getattr(self, name)) for name in type(self).model_fields}
-        has_pay = self.min_amount or self.max_amount
+        has_pay = self.min_amount is not None or self.max_amount is not None
         row["salary_source"] = (
             (self.salary_source or "direct_data") if has_pay else None
         )

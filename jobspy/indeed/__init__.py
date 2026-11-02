@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlsplit
 
+from jobspy.http_control import ControlledRequests, RequestPolicy, RequestStopped
 from jobspy.indeed.constant import (
     countries,
     country_codes,
@@ -39,14 +40,27 @@ from jobspy.util import (
 class Indeed(Scraper):
     api_url = "https://apis.indeed.com/graphql"
 
+    def __init__(self, policy: RequestPolicy | None = None) -> None:
+        super().__init__()
+        self.stop_reason = "not_started"
+        self.skipped_jobs = 0
+        self.policy = policy
+        self.request_count = 0
+
     def scrape(self, scraper_input: ScraperInput) -> list[JobPost]:
+        self.stop_reason = "exhausted"
+        self.skipped_jobs = 0
+        self.error = None
+        self.warnings = []
         self.scraper_input = scraper_input
         country_code = country_codes[scraper_input.country_indeed]
         domain = subdomains.get(scraper_input.country_indeed, country_code.lower())
         self.base_url = f"https://{domain}.indeed.com"
         language = languages.get(country_code, "en")
         self.session = create_session(
-            RequestsRotating(scraper_input.proxies),
+            ControlledRequests(self.policy)
+            if self.policy is not None
+            else RequestsRotating(scraper_input.proxies),
             scraper_input,
             headers
             | {
@@ -74,32 +88,52 @@ class Indeed(Scraper):
                 if not search:
                     raise ValueError(f"API error: {data.get('errors')}")
                 job_search = JobSearch.model_validate(search)
-                jobs = {
-                    result.job["key"]: result.job
-                    for result in job_search.results
-                    if result.job
-                }
+                jobs: dict[str, dict[str, object]] = {}
+                for result in job_search.results:
+                    raw = result.job
+                    if not isinstance(raw, dict):
+                        self.skipped_jobs += 1
+                        self.warn("indeed_invalid_job")
+                        continue
+                    key = raw.get("key")
+                    if not isinstance(key, str) or not key.strip():
+                        self.skipped_jobs += 1
+                        self.warn("indeed_invalid_job")
+                        continue
+                    jobs[key] = raw
                 new_jobs = [job for key, job in jobs.items() if key not in seen]
                 seen.update(jobs)
                 cursor = job_search.nextCursor
-            except Exception as e:
-                self.fail(str(e))
+            except RequestStopped as stopped:
+                self.stop_reason = stopped.reason
+                self.fail(stopped.reason)
+                break
+            except Exception:
+                self.stop_reason = "page_error"
+                self.fail("indeed_page_error")
                 break
 
             for job in new_jobs[skip:]:
                 try:
                     job_list.append(self._process_job(job))
-                except Exception as e:
-                    self.log.warning(f"skipping job: {e}")
+                except Exception:
+                    self.skipped_jobs += 1
+                    self.warn("indeed_invalid_job")
                     continue
                 if len(job_list) >= scraper_input.results_wanted:
                     break
             skip = max(skip - len(new_jobs), 0)
 
+            if len(job_list) >= scraper_input.results_wanted:
+                self.stop_reason = "result_limit"
+                break
             if not new_jobs or not cursor:
+                self.stop_reason = "no_progress" if cursor else "exhausted"
                 break
             page += 1
 
+        if isinstance(self.session, ControlledRequests):
+            self.request_count = self.session.request_count
         return job_list
 
     def _build_query(self, filters: str, cursor: str | None) -> str:

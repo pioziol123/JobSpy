@@ -9,7 +9,7 @@ from jobspy.indeed.constant import (
     remote_key,
 )
 from jobspy.indeed.model import Attribute, IndeedCompensation
-from jobspy.model import Compensation, Country, JobType
+from jobspy.model import Compensation, Country, JobType, SalaryOrigin
 
 
 def get_job_type(attributes: list[Attribute], country: Country) -> list[JobType] | None:
@@ -32,12 +32,27 @@ def get_compensation(compensation: IndeedCompensation) -> Compensation:
     """
     pay = compensation.baseSalary
     currency = compensation.currencyCode
+    origin: SalaryOrigin = "employer"
+    evidence = (
+        compensation.model_dump(mode="json")
+        if compensation.baseSalary is not None
+        or compensation.currencyCode is not None
+        or (
+            compensation.estimated is not None
+            and (
+                compensation.estimated.baseSalary is not None
+                or compensation.estimated.currencyCode is not None
+            )
+        )
+        else None
+    )
     if not pay and compensation.estimated:
         pay = compensation.estimated.baseSalary
         currency = compensation.estimated.currencyCode
+        origin = "portal_estimate"
     interval = pay_intervals.get(pay.unitOfWork) if pay and pay.unitOfWork else None
     if not pay or not interval:
-        return Compensation()
+        return Compensation(salary_evidence=evidence)
     amounts = pay.range
     min_amount = amounts.min if amounts.min is not None else amounts.value
     max_amount = amounts.max if amounts.max is not None else amounts.value
@@ -46,6 +61,10 @@ def get_compensation(compensation: IndeedCompensation) -> Compensation:
         min_amount=round(min_amount, 2) if min_amount is not None else None,
         max_amount=round(max_amount, 2) if max_amount is not None else None,
         currency=currency,
+        salary_origin=origin
+        if min_amount is not None or max_amount is not None
+        else "unknown",
+        salary_evidence=evidence,
     )
 
 
